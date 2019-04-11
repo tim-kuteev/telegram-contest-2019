@@ -243,11 +243,9 @@
 
       if (proceed) {
         const boxHeight = this.svgChart.element.viewBox.baseVal.height;
-        this.svgYAxis.element.querySelectorAll('g.flexible').forEach(g => {
-          const value = g.getAttribute('value');
-          g.setAttribute('transform', `translate(0, -${value * CHART_HEIGHT / boxHeight})`);
+        this.svgYAxis.yAxisGroups.forEach(g => {
+          g.element.setAttribute('transform', `translate(0, -${g.value * CHART_HEIGHT / boxHeight})`);
         });
-
         window.requestAnimationFrame(() => this.animateVerticalScale());
       }
     }
@@ -344,14 +342,14 @@
         if (!this.xData[i]) {
           continue;
         }
-        const exist = this.xAxisGroups.find(g => g.x === i);
+        const exist = this.xAxisGroups.find(g => g.value === i);
         if (exist) {
           newGroups.push(exist);
           continue;
         }
         const group = this.createGroup(this.xData[i]);
         this.element.appendChild(group);
-        const g = {x: i, element: group};
+        const g = {value: i, element: group};
         newGroups.push(g);
         this.xAxisGroups.push(g);
       }
@@ -365,7 +363,7 @@
       });
 
       this.xAxisGroups.forEach(g => {
-        g.element.setAttribute('transform', `translate(${scaleWidth * (g.x - viewBox.x)}, 0)`);
+        g.element.setAttribute('transform', `translate(${scaleWidth * (g.value - viewBox.x)}, 0)`);
       });
     }
 
@@ -387,14 +385,15 @@
     }
 
     newSet(height) {
-      this.element.querySelectorAll('g.flexible').forEach(g => {
-        fadeOutAndRemove(g);
+      this.yAxisGroups.forEach(g => {
+        fadeOutAndRemove(g.element, () => {
+          this.yAxisGroups.splice(this.yAxisGroups.indexOf(g), 1);
+        });
       });
       const step = ~~(height * Y_AXIS_SHIFT);
       for (let val = step; val < height; val += step) {
         const group = this.createGroup(val);
-        group.classList.add('flexible');
-        this.yAxisGroups.push(group);
+        this.yAxisGroups.push({value: val, element: group});
         this.element.appendChild(group);
       }
     }
@@ -408,7 +407,6 @@
       text.innerHTML = val;
 
       const group = document.createElementNS(SVG_NS, 'g');
-      group.setAttribute('value', val);
       group.appendChild(line);
       group.appendChild(text);
       return group;

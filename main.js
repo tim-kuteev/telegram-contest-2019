@@ -5,7 +5,7 @@
   const HEIGHT_SHIFT = 1.05;
   const CHART_HEIGHT = 400;
   const Y_AXIS_SHIFT = 0.19;
-  const X_AXIS_VAL_WIDTH_RATE = 120;
+  const X_AXIS_VAL_WIDTH_RATE = 140;
   const CONTROLS_WIDTH = 12;
   const appContainer = document.querySelector('#app_container');
   const chartTemplate = document.querySelector('#chart_template');
@@ -23,19 +23,40 @@
     return pattern.map(p => p.length ? chunks[p[0]] + p[1] : chunks[p]).join(' ');
   }
 
-  function fadeAnimation(el) {
-    el.addEventListener('animationstart', (e) => {
-      if (e.animationName === 'fade-in') {
-        e.target.classList.add('fade-animation');
-      }
-    });
+  function fadeInAnimation(el, cb) {
     el.addEventListener('animationend', (e) => {
-      if (e.animationName === 'fade-out') {
-        e.target.classList.remove('fade-animation');
+      if (e.animationName === 'fade-in') {
+        cb(e);
       }
     });
   }
 
+  function fadeOutAnimation(el, cb) {
+    el.addEventListener('animationend', (e) => {
+      if (e.animationName === 'fade-out') {
+        cb(e);
+      }
+    });
+  }
+
+  function fadeAnimation(el) {
+    fadeInAnimation(el, (e) => {
+      e.target.classList.add('fade-animation');
+    });
+    fadeOutAnimation(el, (e) => {
+      e.target.classList.remove('fade-animation');
+    });
+  }
+
+  function fadeOutAndRemove(el, cb) {
+    el.classList.add('hidden');
+    fadeOutAnimation(el, (e) => {
+      if (e.target.parentNode) {
+        e.target.parentNode.removeChild(e.target);
+        cb && cb();
+      }
+    });
+  }
 
   function styleMode(mode) {
     if (mode === 'night') {
@@ -178,18 +199,7 @@
 
     scaleHorizontal() {
       this.hideInfo();
-
-      const scaleWidth = this.rectWidth / this.svgChart.element.viewBox.baseVal.width;
-      let frequency = powerOf2(~~(X_AXIS_VAL_WIDTH_RATE / scaleWidth));
-      let xShift = this.svgChart.element.viewBox.baseVal.x;
-      this.svgXAxis.xAxisGroups.forEach(g => {
-        g.element.setAttribute('transform', `translate(${scaleWidth * (g.x - xShift)}, 0)`);
-        if (!(g.x % frequency)) {
-          g.element.classList.remove('hidden');
-        } else {
-          g.element.classList.add('hidden');
-        }
-      });
+      this.svgXAxis.updateSet(this.svgChart.element.viewBox.baseVal, this.rectWidth);
     }
 
     scaleVertical(frames) {
@@ -264,10 +274,11 @@
     }
 
     scroll(left, right) {
-      if (left) {
+      if (left >= 0) {
         this.element.viewBox.baseVal.x = left * (this.data.x.length - 1);
       }
-      if (right) {
+      if (right >= 0) {
+        right = 1 - right;
         this.element.viewBox.baseVal.width = right * (this.data.x.length - 1) - this.element.viewBox.baseVal.x;
       }
     }
@@ -319,20 +330,51 @@
     constructor(element, x) {
       this.element = element;
       this.xAxisGroups = [];
-      this.init(x);
+      this.xData = x;
     }
 
-    init(x) {
-      for (let i = 1; i < x.length - 1; i++) {
-        const text = document.createElementNS(SVG_NS, 'text');
-        text.textContent = dateFormat(x[i], 1, 2);
-        const group = document.createElementNS(SVG_NS, 'g');
-        group.classList.add('hidden');
-        group.appendChild(text);
-        this.xAxisGroups.push({x: i, element: group});
-        fadeAnimation(group);
+    updateSet(viewBox, rectWidth) {
+      const scaleWidth = rectWidth / viewBox.width;
+      const frequency = powerOf2(~~(X_AXIS_VAL_WIDTH_RATE / scaleWidth)) || 1;
+      const start = (~~(viewBox.x / frequency) * frequency) - frequency;
+      const end = viewBox.x + viewBox.width + frequency;
+
+      const newGroups = [];
+      for (let i = start; i <= end; i += frequency) {
+        if (!this.xData[i]) {
+          continue;
+        }
+        const exist = this.xAxisGroups.find(g => g.x === i);
+        if (exist) {
+          newGroups.push(exist);
+          continue;
+        }
+        const group = this.createGroup(this.xData[i]);
         this.element.appendChild(group);
+        const g = {x: i, element: group};
+        newGroups.push(g);
+        this.xAxisGroups.push(g);
       }
+      this.xAxisGroups.forEach(g => {
+        if (newGroups.some(n => n === g)) {
+          return;
+        }
+        fadeOutAndRemove(g.element, () => {
+          this.xAxisGroups.splice(this.xAxisGroups.indexOf(g), 1);
+        });
+      });
+
+      this.xAxisGroups.forEach(g => {
+        g.element.setAttribute('transform', `translate(${scaleWidth * (g.x - viewBox.x)}, 0)`);
+      });
+    }
+
+    createGroup(val) {
+      const text = document.createElementNS(SVG_NS, 'text');
+      text.textContent = dateFormat(val, 1, 2);
+      const group = document.createElementNS(SVG_NS, 'g');
+      group.appendChild(text);
+      return group;
     }
   }
 
@@ -341,26 +383,23 @@
     constructor(element) {
       this.element = element;
       this.yAxisGroups = [];
-      this.element.appendChild(this.createRow('0'));
+      this.element.appendChild(this.createGroup('0'));
     }
 
     newSet(height) {
       this.element.querySelectorAll('g.flexible').forEach(g => {
-        g.classList.add('hidden');
-        g.addEventListener('animationend', (e) => {
-          e.target.parentNode && e.target.parentNode.removeChild(e.target);
-        });
+        fadeOutAndRemove(g);
       });
       const step = ~~(height * Y_AXIS_SHIFT);
       for (let val = step; val < height; val += step) {
-        const group = this.createRow(val);
+        const group = this.createGroup(val);
         group.classList.add('flexible');
         this.yAxisGroups.push(group);
         this.element.appendChild(group);
       }
     }
 
-    createRow(val) {
+    createGroup(val) {
       const line = document.createElementNS(SVG_NS, 'line');
       line.setAttribute('x2', '100%');
 
@@ -434,7 +473,6 @@
         button.setAttribute('type', 'button');
         const tick = document.createElement('div');
         tick.style.setProperty('--tick-color', line.color);
-        tick.innerHTML = '&#10004';
         button.appendChild(tick);
         const name = document.createElement('div');
         name.innerHTML = line.name;
@@ -540,9 +578,8 @@
       if (right) {
         this.rightMove = this.basisRightStart + right;
         this.rightShade.style.setProperty('flex-basis', 100 * this.rightMove + '%');
-        this.rightMove = 1 - this.rightMove;
       } else if (!this.rightMove) {
-        this.rightMove = 1 - parseFloat(this.rightShade.style['flex-basis']) / 100;
+        this.rightMove = parseFloat(this.rightShade.style['flex-basis']) / 100;
       }
       this.move();
     }
